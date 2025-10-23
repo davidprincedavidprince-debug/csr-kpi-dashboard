@@ -1,12 +1,13 @@
-import streamlit as st
 import pandas as pd
 import re
-from io import BytesIO
+import streamlit as st
 
-st.set_page_config(page_title="CSR KPI Dashboard", layout="wide")
+# ============================================================
+# 🔧 HELPER FUNCTIONS
+# ============================================================
 
-# === Helper Functions ===
 def extract_number_keep_none(obj):
+    """Extract numeric value from messy Excel cell, return None if invalid."""
     if pd.isna(obj):
         return None
     s = str(obj).strip()
@@ -19,222 +20,133 @@ def extract_number_keep_none(obj):
     except:
         return None
 
-def clean_excel(filepath):
-    excel_raw = pd.read_excel(filepath, header=None)
-    excel_raw = excel_raw.dropna(how="all")
 
+def clean_excel(filepath):
+    """Read and clean the Excel file, handling blank rows before headers."""
+    excel_raw = pd.read_excel(filepath, header=None)
+    excel_raw = excel_raw.dropna(how='all')
     header_candidates = excel_raw[excel_raw.astype(str).apply(
-        lambda r: r.str.contains("project_code", case=False, na=False)
+        lambda r: r.str.contains('project_code', case=False, na=False)
     ).any(axis=1)]
     header_row = header_candidates.index[0] if not header_candidates.empty else 0
 
     df = pd.read_excel(filepath, header=header_row)
     df.columns = df.columns.astype(str).str.strip()
-    df["project_code"] = df["project_code"].astype(str).str.strip().str.upper()
+    df['project_code'] = df['project_code'].astype(str).str.strip().str.upper()
 
-    # Numeric extraction
-    cols = ["score_1_response", "score_2_response", "score_1_average", "score_2_average"]
+    cols = ['score_1_response', 'score_2_response', 'score_1_average', 'score_2_average']
     for c in cols:
         if c in df.columns:
-            df[c + "_num"] = df[c].apply(extract_number_keep_none)
+            df[c + '_num'] = df[c].apply(extract_number_keep_none)
         else:
-            df[c + "_num"] = pd.NA
+            df[c + '_num'] = pd.NA
 
     return df
 
-def excel_style_calculations(df):
+
+# ============================================================
+# 📊 STATIC SOURCE DATA LOADER
+# ============================================================
+
+@st.cache_data
+def load_static_source():
+    """Load the static Excel file 'source.xlsx' from the same folder."""
+    try:
+        df = clean_excel("source.xlsx")  # static file path
+        st.success("✅ Source file 'source.xlsx' loaded successfully.")
+        return df
+    except FileNotFoundError:
+        st.error("⚠️ Source file 'source.xlsx' not found in the app folder.")
+        return pd.DataFrame()
+    except Exception as e:
+        st.error(f"⚠️ Error reading 'source.xlsx': {e}")
+        return pd.DataFrame()
+
+
+# ============================================================
+# 🧮 CALCULATION FUNCTION
+# ============================================================
+
+def calculate_project_metrics(df, filters=None):
     if df.empty:
-        return None
+        return pd.DataFrame()
 
-    sum_score_1_response = df["score_1_response_num"].fillna(0).sum()
-    sum_score_2_response = df["score_2_response_num"].fillna(0).sum()
-    avg_score_1_average = df["score_1_average_num"].dropna().mean()
-    avg_score_2_average = df["score_2_average_num"].dropna().mean()
+    if filters:
+        for key, values in filters.items():
+            if values and key in df.columns:
+                df = df[df[key].isin(values)]
 
-    score1_averageXsum = (avg_score_1_average or 0.0) * sum_score_1_response
-    score2_averageXsum = (avg_score_2_average or 0.0) * sum_score_2_response
+    projects = sorted(df['project_code'].dropna().unique().tolist())
+    results = []
 
-    total_responses = sum_score_1_response + sum_score_2_response
-    total_weight = score1_averageXsum + score2_averageXsum
-    total_score = total_weight / total_responses if total_responses else 0.0
+    for project in projects:
+        dproj = df[df['project_code'] == project].copy()
+        row_count = len(dproj)
 
-    return {
-        "Total Responses": int(total_responses),
-        "Priority / Timeliness / Measures of Sustainability": round(avg_score_1_average, 2),
-        "Sufficiency / Quality / Current Status": round(avg_score_2_average, 2),
-        "Score1_averageXsum": round(score1_averageXsum),
-        "Score2_averageXsum": round(score2_averageXsum),
-        "score1weight+score2weight": round(total_weight),
-        "Total Quant Score - Relevance / Efficiency / Sustainability": round(total_score, 2),
-    }
+        sum_score_1_response = dproj['score_1_response_num'].fillna(0).sum()
+        sum_score_2_response = dproj['score_2_response_num'].fillna(0).sum()
+        avg_score_1_average = dproj['score_1_average_num'].dropna().mean()
+        avg_score_2_average = dproj['score_2_average_num'].dropna().mean()
 
-# === Streamlit UI ===
+        score1_averageXsum = (avg_score_1_average or 0.0) * sum_score_1_response
+        score2_averageXsum = (avg_score_2_average or 0.0) * sum_score_2_response
+        total_responses = sum_score_1_response + sum_score_2_response
+        total_weight = score1_averageXsum + score2_averageXsum
+        total_score = total_weight / total_responses if total_responses else 0.0
+
+        results.append({
+            'project_code': project,
+            'Row_Count': row_count,
+            'Total_Responses': int(total_responses),
+            'Priority/Timeliness /Measures of Sustainability': round(avg_score_1_average, 2),
+            'Sufficiency/Quality/Current Status': round(avg_score_2_average, 2),
+            'Score1_averageXsum': round(score1_averageXsum),
+            'Score2_averageXsum': round(score2_averageXsum),
+            'score1weight+score2weight': round(total_weight),
+            'Total Quant Score - Relevance /Effeciency /Sustainability': round(total_score, 2)
+        })
+
+    return pd.DataFrame(results)
+
+
+# ============================================================
+# 🖥️ STREAMLIT DASHBOARD
+# ============================================================
+
+st.set_page_config(page_title="CSR KPI Dashboard", layout="wide")
+
 st.title("📊 CSR KPI Dashboard")
+st.markdown("#### Scoring Reckoner Quant Dashboard")
 
-# --- Infographic Table as HTML ---
-st.markdown("""
-<style>
-.infotable {
-  width: 100%;
-  border-collapse: collapse;
-  font-size: 14px;
-  text-align: center;
+# Load the static data
+df = load_static_source()
+
+if df.empty:
+    st.stop()
+
+# --- Filter Section ---
+st.sidebar.header("🔍 Filters")
+
+filter_fields = {
+    "project_code": st.sidebar.multiselect("Project Code", sorted(df['project_code'].unique())),
+    "Tool_level4": st.sidebar.multiselect("Tool Level 4", sorted(df['Tool_level4'].dropna().unique())),
+    "score_type": st.sidebar.multiselect("Score Type", sorted(df['score_type'].dropna().unique())),
+    "Intervention_level3": st.sidebar.multiselect("Intervention Level 3", sorted(df['Intervention_level3'].dropna().unique())),
+    "Activity_level1": st.sidebar.multiselect("Activity Level 1", sorted(df['Activity_level1'].dropna().unique()))
 }
-.infotable th {
-  background-color: #2c3e50;
-  color: white;
-  padding: 8px;
-  border: 1px solid #555;
-}
-.infotable td {
-  border: 1px solid #999;
-  padding: 6px;
-}
-.infotable .col1 { background-color: #b8d9ff; font-weight: bold; }
-.infotable .score1 { background-color: #d9ead3; }
-.infotable .score2 { background-color: #d9ead3; }
-.infotable .param1 { background-color: #f9d5e5; }
-.infotable .param2 { background-color: #f9d5e5; }
-.infotable .remark { background-color: #f4cccc; }
-</style>
 
-<h4>🧭 Scoring Reckoner Quant — CSR Evaluation Framework</h4>
+# Clear Filters button
+if st.sidebar.button("🧹 Clear All Filters"):
+    st.experimental_rerun()
 
-<table class="infotable">
-<thead>
-<tr>
-  <th>Indicator</th>
-  <th>Score 1</th>
-  <th>Score 2</th>
-  <th>Parameter 1</th>
-  <th>Parameter 2</th>
-  <th>Remark</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-  <td class="col1">Relevance</td>
-  <td class="score1">Priority</td>
-  <td class="score2">Sufficiency</td>
-  <td class="param1">Beneficiary Need Alignment</td>
-  <td class="param2"></td>
-  <td class="remark">Average of score 1 and score 2</td>
-</tr>
-<tr>
-  <td class="col1">Efficiency</td>
-  <td class="score1">Timeliness</td>
-  <td class="score2">Quality</td>
-  <td class="param1">Timeliness</td>
-  <td class="param2">Quality</td>
-  <td class="remark"></td>
-</tr>
-<tr>
-  <td class="col1">Effectiveness</td>
-  <td class="score1">Short Term Result</td>
-  <td class="score2"></td>
-  <td class="param1">Short Term Results</td>
-  <td class="param2"></td>
-  <td class="remark"></td>
-</tr>
-<tr>
-  <td class="col1">Sustainability</td>
-  <td class="score1">Measures of Sustainability</td>
-  <td class="score2">Current Status</td>
-  <td class="param1">Sustainability</td>
-  <td class="param2"></td>
-  <td class="remark">Average of score 1 and score 2</td>
-</tr>
-<tr>
-  <td class="col1">Impact</td>
-  <td class="score1">Long-term Outcome</td>
-  <td class="score2"></td>
-  <td class="param1">Impact</td>
-  <td class="param2"></td>
-  <td class="remark"></td>
-</tr>
-</tbody>
-</table>
-<hr style="margin-top:20px;margin-bottom:10px;">
-""", unsafe_allow_html=True)
+# --- Calculations ---
+summary_df = calculate_project_metrics(df, filters=filter_fields)
 
-# --- File Upload ---
-st.markdown("Upload the Excel file to calculate project-level KPIs with dynamic filters.")
-uploaded_file = st.file_uploader("📁 Upload Excel File", type=["xlsx", "xls"])
+# --- Display Results ---
+st.dataframe(summary_df, use_container_width=True)
 
-if uploaded_file:
-    df = clean_excel(uploaded_file)
+# --- Download Option ---
+csv = summary_df.to_csv(index=False).encode('utf-8')
+st.download_button("📥 Download Results as CSV", csv, "CSR_KPI_Summary.csv", "text/csv")
 
-    st.sidebar.header("🔍 Filters")
-
-    # Clear all filters
-    if st.sidebar.button("🧹 Clear All Filters"):
-        st.session_state.clear_filters = True
-    else:
-        st.session_state.clear_filters = False
-
-    filtered_df = df.copy()
-    filter_cols = ["project_code", "Tool_level4", "score_type", "Intervention_level3", "Activity_level1"]
-
-    # Collapsible filter checkboxes
-    for col in filter_cols:
-        if col in df.columns:
-            with st.sidebar.expander(f"Filter by {col}"):
-                options = sorted(df[col].dropna().unique().tolist())
-
-                # Select all / deselect all toggles
-                all_selected = st.checkbox(f"Select all {col}", value=True, key=f"{col}_all")
-                selected_values = []
-
-                if all_selected:
-                    selected_values = options
-                else:
-                    for opt in options:
-                        if st.checkbox(opt, key=f"{col}_{opt}"):
-                            selected_values.append(opt)
-
-                if selected_values:
-                    filtered_df = filtered_df[filtered_df[col].isin(selected_values)]
-
-    # --- KPI Calculations ---
-    calc = excel_style_calculations(filtered_df)
-
-    if calc:
-        st.subheader("📈 Calculated KPIs")
-        kpi_cols = st.columns(3)
-        kpi_cols[0].metric("Total Responses", f"{calc['Total Responses']:,}")
-        kpi_cols[1].metric("Priority / Timeliness / Measures of Sustainability", f"{calc['Priority / Timeliness / Measures of Sustainability']:.2f}")
-        kpi_cols[2].metric("Sufficiency / Quality / Current Status", f"{calc['Sufficiency / Quality / Current Status']:.2f}")
-
-        st.markdown("---")
-        kpi_cols2 = st.columns(3)
-        kpi_cols2[0].metric("Score1_averageXsum", f"{calc['Score1_averageXsum']:,}")
-        kpi_cols2[1].metric("Score2_averageXsum", f"{calc['Score2_averageXsum']:,}")
-        kpi_cols2[2].metric("score1weight+score2weight", f"{calc['score1weight+score2weight']:,}")
-
-        st.markdown("### 🧮 Total Quant Score - Relevance / Efficiency / Sustainability")
-        st.metric("Total Quant Score - Relevance / Efficiency / Sustainability", f"{calc['Total Quant Score - Relevance / Efficiency / Sustainability']:.2f}")
-
-        # --- Download Options ---
-        st.markdown("---")
-        st.subheader("⬇️ Download Data")
-
-        raw_buf = BytesIO()
-        filtered_df.to_excel(raw_buf, index=False)
-        st.download_button(
-            "Download Filtered Raw Data",
-            data=raw_buf.getvalue(),
-            file_name="Filtered_Raw_Data.xlsx",
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        )
-
-        summary_df = pd.DataFrame([calc])
-        calc_buf = BytesIO()
-        summary_df.to_excel(calc_buf, index=False)
-        st.download_button(
-            "Download Calculated Summary",
-            data=calc_buf.getvalue(),
-            file_name="Calculated_Summary.xlsx",
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        )
-    else:
-        st.warning("No data available for the selected filters.")
+st.caption("Data auto-loaded from static file 'source.xlsx'.")
