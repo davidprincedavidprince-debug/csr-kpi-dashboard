@@ -24,9 +24,9 @@ def extract_number_keep_none(obj):
         return None
 
 
-def clean_excel(filepath):
+def clean_excel(filepath, sheet_name=0):
     """Clean Excel by detecting header row and extracting numeric fields."""
-    excel_raw = pd.read_excel(filepath, header=None)
+    excel_raw = pd.read_excel(filepath, sheet_name=sheet_name, header=None)
     excel_raw = excel_raw.dropna(how="all")
 
     header_candidates = excel_raw[excel_raw.astype(str).apply(
@@ -34,7 +34,7 @@ def clean_excel(filepath):
     ).any(axis=1)]
     header_row = header_candidates.index[0] if not header_candidates.empty else 0
 
-    df = pd.read_excel(filepath, header=header_row, sheet_name=0)
+    df = pd.read_excel(filepath, sheet_name=sheet_name, header=header_row)
     df.columns = df.columns.astype(str).str.strip()
     df["project_code"] = df["project_code"].astype(str).str.strip().str.upper()
 
@@ -44,7 +44,6 @@ def clean_excel(filepath):
             df[c + "_num"] = df[c].apply(extract_number_keep_none)
         else:
             df[c + "_num"] = pd.NA
-
     return df
 
 
@@ -60,8 +59,8 @@ def load_static_source():
         xl = pd.ExcelFile("source.xlsx")
         all_sheets = {sheet: xl.parse(sheet) for sheet in xl.sheet_names}
 
-        # Extract the first sheet for main dashboard logic
-        df_main = clean_excel("source.xlsx")
+        # ✅ Use actual sheet name in your file
+        df_main = clean_excel("source.xlsx", sheet_name="indicator_analysis_table")
         st.success("✅ Source file 'source.xlsx' loaded successfully with multiple sheets.")
         return df_main, all_sheets
     except FileNotFoundError:
@@ -152,9 +151,7 @@ st.markdown("""
 <tbody>
 <tr><td class="col1">Relevance</td><td class="score1">Priority</td><td class="score2">Sufficiency</td><td class="param1">Beneficiary Need Alignment</td><td></td><td class="remark">Average of score 1 and score 2</td></tr>
 <tr><td class="col1">Efficiency</td><td class="score1">Timeliness</td><td class="score2">Quality</td><td class="param1">Timeliness</td><td class="param2">Quality</td><td></td></tr>
-<tr><td class="col1">Effectiveness</td><td class="score1">Short Term Result</td><td></td><td class="param1">Short Term Results</td><td></td><td></td></tr>
 <tr><td class="col1">Sustainability</td><td class="score1">Measures of Sustainability</td><td class="score2">Current Status</td><td class="param1">Sustainability</td><td></td><td class="remark">Average of score 1 and score 2</td></tr>
-<tr><td class="col1">Impact</td><td class="score1">Long-term Outcome</td><td></td><td class="param1">Impact</td><td></td><td></td></tr>
 </tbody>
 </table>
 <hr>
@@ -174,8 +171,9 @@ filtered_df = df.copy()
 for col in filter_cols:
     if col in df.columns:
         options = sorted(df[col].dropna().unique().tolist())
+        # 🧩 Remove 'Impact' and 'Effectiveness' from score_type filter
         if col == "score_type":
-            options = sorted(set(options + ["Effectiveness", "Impact"]))
+            options = [opt for opt in options if opt not in ["Impact", "Effectiveness"]]
         selected = st.sidebar.multiselect(f"{col}", options, default=options)
         filtered_df = filtered_df[filtered_df[col].isin(selected)]
 
@@ -205,6 +203,7 @@ if calc:
     st.divider()
     st.subheader("⬇️ Download Data")
 
+    # Download filtered data
     raw_buf = BytesIO()
     filtered_df.to_excel(raw_buf, index=False)
     st.download_button(
@@ -214,7 +213,7 @@ if calc:
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
     )
 
-    # --- New: Download Full Source File (All Sheets) ---
+    # Download all sheets
     source_buf = BytesIO()
     with pd.ExcelWriter(source_buf, engine="openpyxl") as writer:
         for sheet_name, sheet_data in all_sheets.items():
@@ -226,6 +225,7 @@ if calc:
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
     )
 
+    # Summary export
     summary_df = pd.DataFrame([calc])
     calc_buf = BytesIO()
     summary_df.to_excel(calc_buf, index=False)
