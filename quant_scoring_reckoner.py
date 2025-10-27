@@ -3,7 +3,7 @@ import pandas as pd
 import re
 from io import BytesIO
 
-st.set_page_config(page_title="CSR KPI Dashboard", layout="wide")
+st.set_page_config(page_title="Quant Scoring Reckoner", layout="wide")
 
 # ======================================================
 # 🧮 Helper Functions
@@ -34,7 +34,7 @@ def clean_excel(filepath):
     ).any(axis=1)]
     header_row = header_candidates.index[0] if not header_candidates.empty else 0
 
-    df = pd.read_excel(filepath, header=header_row)
+    df = pd.read_excel(filepath, header=header_row, sheet_name=0)
     df.columns = df.columns.astype(str).str.strip()
     df["project_code"] = df["project_code"].astype(str).str.strip().str.upper()
 
@@ -56,15 +56,20 @@ def clean_excel(filepath):
 def load_static_source():
     """Load static Excel file 'source.xlsx' automatically."""
     try:
-        df = clean_excel("source.xlsx")
-        st.success("✅ Source file 'source.xlsx' loaded successfully.")
-        return df
+        # Load all sheets at once
+        xl = pd.ExcelFile("source.xlsx")
+        all_sheets = {sheet: xl.parse(sheet) for sheet in xl.sheet_names}
+
+        # Extract the first sheet for main dashboard logic
+        df_main = clean_excel("source.xlsx")
+        st.success("✅ Source file 'source.xlsx' loaded successfully with multiple sheets.")
+        return df_main, all_sheets
     except FileNotFoundError:
         st.error("⚠️ Source file 'source.xlsx' not found. Please add it to the app folder.")
-        return pd.DataFrame()
+        return pd.DataFrame(), {}
     except Exception as e:
         st.error(f"⚠️ Error reading 'source.xlsx': {e}")
-        return pd.DataFrame()
+        return pd.DataFrame(), {}
 
 
 # ======================================================
@@ -90,18 +95,18 @@ def excel_style_calculations(df):
         "Total Responses": int(total_responses),
         "Priority / Timeliness / Measures of Sustainability": round(avg_score_1_average, 2),
         "Sufficiency / Quality / Current Status": round(avg_score_2_average, 2),
-        "Score1_averageXsum": int(round(score1_averageXsum)) if not pd.isna(score1_averageXsum) else 0,
-        "Score2_averageXsum": int(round(score2_averageXsum)) if not pd.isna(score2_averageXsum) else 0,
-        "score1weight+score2weight": int(round(total_weight)) if not pd.isna(total_weight) else 0,
+        "Score1_averageXsum": int(round(score1_averageXsum)),
+        "Score2_averageXsum": int(round(score2_averageXsum)),
+        "score1weight+score2weight": int(round(total_weight)),
         "Total Quant Score - Relevance / Efficiency / Sustainability": round(total_score, 2),
     }
 
 
 # ======================================================
-# 🖥️ Streamlit UI
+# 🖥️ Streamlit UI — Quant Scoring Reckoner
 # ======================================================
 
-st.title("📊 CSR KPI Dashboard")
+st.title("📊 Quant Scoring Reckoner Dashboard")
 st.caption("Centralized Quantitative Scoring and Evaluation Framework")
 
 # --- Infographic ---
@@ -156,7 +161,7 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # --- Load Data ---
-df = load_static_source()
+df, all_sheets = load_static_source()
 if df.empty:
     st.stop()
 
@@ -169,10 +174,11 @@ filtered_df = df.copy()
 for col in filter_cols:
     if col in df.columns:
         options = sorted(df[col].dropna().unique().tolist())
+        if col == "score_type":
+            options = sorted(set(options + ["Effectiveness", "Impact"]))
         selected = st.sidebar.multiselect(f"{col}", options, default=options)
         filtered_df = filtered_df[filtered_df[col].isin(selected)]
 
-# --- Clear Filters ---
 if st.sidebar.button("🧹 Clear All Filters"):
     st.experimental_rerun()
 
@@ -196,7 +202,6 @@ if calc:
     st.markdown("### 🧮 Total Quant Score - Relevance / Efficiency / Sustainability")
     st.metric("Total Quant Score", f"{calc['Total Quant Score - Relevance / Efficiency / Sustainability']:.2f}")
 
-    # --- Download Options ---
     st.divider()
     st.subheader("⬇️ Download Data")
 
@@ -206,6 +211,18 @@ if calc:
         "📥 Download Filtered Raw Data",
         data=raw_buf.getvalue(),
         file_name="Filtered_Raw_Data.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    )
+
+    # --- New: Download Full Source File (All Sheets) ---
+    source_buf = BytesIO()
+    with pd.ExcelWriter(source_buf, engine="openpyxl") as writer:
+        for sheet_name, sheet_data in all_sheets.items():
+            sheet_data.to_excel(writer, index=False, sheet_name=sheet_name)
+    st.download_button(
+        "📦 Download Full Source File (All Sheets)",
+        data=source_buf.getvalue(),
+        file_name="Full_Source_File.xlsx",
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
     )
 
@@ -222,4 +239,4 @@ if calc:
 else:
     st.warning("⚠️ No data available for the selected filters.")
 
-st.caption("Data auto-loaded from static file 'source.xlsx'.")
+st.caption("Data auto-loaded from 'source.xlsx' (includes all sheets).")
