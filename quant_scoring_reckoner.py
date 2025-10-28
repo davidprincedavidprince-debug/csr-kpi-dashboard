@@ -124,7 +124,7 @@ for col in filter_cols:
             filtered_df = filtered_df[filtered_df[col].isin(selected)]
 
 if st.sidebar.button("🧹 Clear All Filters"):
-    st.experimental_rerun()
+    st.rerun()  # ✅ updated API
 
 # --- KPI Calculations ---
 calc = excel_style_calculations(filtered_df)
@@ -163,7 +163,7 @@ st.download_button("📥 Download Filtered Raw Data",
 
 # --- Smart Combined Download (Excel + CSVs) ---
 st.markdown("### 📦 Download Complete Dataset (Excel + CSVs)")
-st.caption("Includes indicator_analysis_table, short_term_long_term, and all other supporting CSVs.")
+st.caption("Includes indicator_analysis_table, short_term_long_term, and all supporting CSVs.")
 
 def generate_data_package():
     zip_buffer = BytesIO()
@@ -175,13 +175,19 @@ def generate_data_package():
             df_stlt.to_excel(writer, index=False, sheet_name="short_term_long_term")
         zf.writestr("source_data.xlsx", out_excel.getvalue())
 
-        # Add CSVs
-        csv_folder = "static_data"
-        if os.path.exists(csv_folder):
+        # Detect CSV folder automatically
+        possible_folders = ["static_data", "static data"]
+        csv_folder = next((f for f in possible_folders if os.path.exists(f)), None)
+
+        if csv_folder:
             for csv_file in os.listdir(csv_folder):
-                if csv_file.endswith(".csv"):
-                    with open(os.path.join(csv_folder, csv_file), "rb") as f:
-                        zf.writestr(f"static_data/{csv_file}", f.read())
+                if csv_file.lower().endswith(".csv"):
+                    file_path = os.path.join(csv_folder, csv_file)
+                    with open(file_path, "rb") as f:
+                        zf.writestr(f"{csv_folder}/{csv_file}", f.read())
+        else:
+            st.warning("⚠️ CSV folder not found. Ensure it's named 'static_data' or 'static data'.")
+
     zip_buffer.seek(0)
     return zip_buffer.getvalue()
 
@@ -192,4 +198,4 @@ st.download_button(
     mime="application/zip",
 )
 
-st.caption("⚡ Optimized with 1-hour resource caching and lightweight hybrid data architecture.")
+st.caption("⚡ Optimized with 1-hour resource caching and automatic CSV folder detection.")
