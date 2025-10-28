@@ -2,7 +2,9 @@ import streamlit as st
 import pandas as pd
 import re
 from io import BytesIO
+from zipfile import ZipFile
 from openpyxl import load_workbook
+import os
 
 st.set_page_config(page_title="Quant Scoring Reckoner", layout="wide")
 
@@ -25,7 +27,7 @@ def extract_number_keep_none(obj):
 
 
 def clean_excel(filepath, sheet_name):
-    """Read only the required sheet efficiently and clean it."""
+    """Read specific Excel sheet efficiently."""
     excel_raw = pd.read_excel(filepath, sheet_name=sheet_name, header=None, engine="openpyxl")
     excel_raw = excel_raw.dropna(how="all")
 
@@ -50,28 +52,27 @@ def clean_excel(filepath, sheet_name):
 
 
 # ======================================================
-# 📊 Data Loader (Lightweight)
+# 📊 Data Loaders with Optimized Resource Caching
 # ======================================================
 
-@st.cache_data(show_spinner=False)
+@st.cache_resource(ttl=3600)
 def load_analysis_data():
+    """
+    Load source.xlsx efficiently with 1-hour caching.
+    This prevents reloading large Excel files on every rerun.
+    """
     try:
-        df = clean_excel("source.xlsx", "indicator_analysis_table")
-        wb = load_workbook("source.xlsx", read_only=True)
-        all_sheets = wb.sheetnames
-        wb.close()
-        st.success(f"✅ Loaded sheet 'indicator_analysis_table' ({len(df):,} rows).")
-        return df, all_sheets
-    except FileNotFoundError:
-        st.error("⚠️ 'source.xlsx' not found.")
-        return pd.DataFrame(), []
+        df_main = clean_excel("source.xlsx", "indicator_analysis_table")
+        df_stlt = pd.read_excel("source.xlsx", sheet_name="short_term_long_term", engine="openpyxl")
+        st.success(f"✅ Loaded indicator_analysis_table ({len(df_main):,} rows) and short_term_long_term.")
+        return df_main, df_stlt
     except Exception as e:
-        st.error(f"⚠️ Error loading Excel: {e}")
-        return pd.DataFrame(), []
+        st.error(f"⚠️ Error loading 'source.xlsx': {e}")
+        return pd.DataFrame(), pd.DataFrame()
 
 
 # ======================================================
-# 🧾 KPI Calculation
+# 🧾 KPI Calculations
 # ======================================================
 
 def excel_style_calculations(df):
@@ -97,27 +98,25 @@ def excel_style_calculations(df):
 
 
 # ======================================================
-# 🖥️ Streamlit UI
+# 🖥️ Streamlit Dashboard
 # ======================================================
 
 st.title("📊 Quant Scoring Reckoner Dashboard")
-st.caption("Centralized Quantitative Scoring and Evaluation Framework")
+st.caption("Optimized, Modular CSR Evaluation Framework")
 
-# --- Load Main Data ---
-df, sheet_names = load_analysis_data()
-if df.empty:
+df_main, df_stlt = load_analysis_data()
+if df_main.empty:
     st.stop()
 
 # --- Sidebar Filters ---
 st.sidebar.header("🔍 Filters")
 
 filter_cols = ["project_code", "Tool_level4", "score_type", "Intervention_level3", "Activity_level1"]
-filtered_df = df.copy()
+filtered_df = df_main.copy()
 
 for col in filter_cols:
-    if col in df.columns:
-        options = sorted(df[col].dropna().unique().tolist())
-        # Remove Impact & Effectiveness
+    if col in df_main.columns:
+        options = sorted(df_main[col].dropna().unique().tolist())
         if col == "score_type":
             options = [opt for opt in options if opt not in ["Impact", "Effectiveness"]]
         selected = st.sidebar.multiselect(col, options, default=options)
@@ -127,14 +126,16 @@ for col in filter_cols:
 if st.sidebar.button("🧹 Clear All Filters"):
     st.experimental_rerun()
 
-# --- KPIs ---
+# --- KPI Calculations ---
 calc = excel_style_calculations(filtered_df)
 if calc:
     st.markdown("## 📈 Key Performance Indicators (KPIs)")
     kpi_cols = st.columns(3)
     kpi_cols[0].metric("Total Responses", f"{calc['Total Responses']:,}")
-    kpi_cols[1].metric("Priority / Timeliness / Measures of Sustainability", f"{calc['Priority / Timeliness / Measures of Sustainability']:.2f}")
-    kpi_cols[2].metric("Sufficiency / Quality / Current Status", f"{calc['Sufficiency / Quality / Current Status']:.2f}")
+    kpi_cols[1].metric("Priority / Timeliness / Measures of Sustainability",
+                       f"{calc['Priority / Timeliness / Measures of Sustainability']:.2f}")
+    kpi_cols[2].metric("Sufficiency / Quality / Current Status",
+                       f"{calc['Sufficiency / Quality / Current Status']:.2f}")
 
     st.divider()
     kpi_cols2 = st.columns(3)
@@ -142,38 +143,53 @@ if calc:
     kpi_cols2[1].metric("Score2_averageXsum", f"{calc['Score2_averageXsum']:,}")
     kpi_cols2[2].metric("score1weight+score2weight", f"{calc['score1weight+score2weight']:,}")
 
-    st.metric("Total Quant Score", f"{calc['Total Quant Score - Relevance / Efficiency / Sustainability']:.2f}")
+    st.metric("Total Quant Score",
+              f"{calc['Total Quant Score - Relevance / Efficiency / Sustainability']:.2f}")
 
-    st.divider()
-    st.subheader("⬇️ Download Data")
+# ======================================================
+# 📦 Download Options
+# ======================================================
 
-    # Filtered Data
-    buf = BytesIO()
-    filtered_df.to_excel(buf, index=False)
-    st.download_button("📥 Download Filtered Raw Data",
-                       data=buf.getvalue(),
-                       file_name="Filtered_Raw_Data.xlsx",
-                       mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+st.divider()
+st.subheader("⬇️ Download Data")
 
-    # Lazy Full Source Download
-    def generate_full_source():
-        wb = load_workbook("source.xlsx", read_only=True)
-        out = BytesIO()
-        with pd.ExcelWriter(out, engine="openpyxl") as writer:
-            for s in wb.sheetnames:
-                df_temp = pd.read_excel("source.xlsx", sheet_name=s, engine="openpyxl")
-                df_temp.to_excel(writer, index=False, sheet_name=s)
-        wb.close()
-        return out.getvalue()
+# Filtered Excel
+buf = BytesIO()
+filtered_df.to_excel(buf, index=False)
+st.download_button("📥 Download Filtered Raw Data",
+                   data=buf.getvalue(),
+                   file_name="Filtered_Raw_Data.xlsx",
+                   mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
 
-    st.download_button(
-        "📦 Download Full Source File (All Sheets — including POE, SDLE, NRM, Health & Hygiene)",
-        data=generate_full_source(),
-        file_name="Full_Source_File.xlsx",
-        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-    )
+# --- Smart Combined Download (Excel + CSVs) ---
+st.markdown("### 📦 Download Complete Dataset (Excel + CSVs)")
+st.caption("Includes indicator_analysis_table, short_term_long_term, and all other supporting CSVs.")
 
-else:
-    st.warning("⚠️ No data available for the selected filters.")
+def generate_data_package():
+    zip_buffer = BytesIO()
+    with ZipFile(zip_buffer, "w") as zf:
+        # Add both Excel sheets
+        out_excel = BytesIO()
+        with pd.ExcelWriter(out_excel, engine="openpyxl") as writer:
+            df_main.to_excel(writer, index=False, sheet_name="indicator_analysis_table")
+            df_stlt.to_excel(writer, index=False, sheet_name="short_term_long_term")
+        zf.writestr("source_data.xlsx", out_excel.getvalue())
 
-st.caption("Data auto-loaded from 'source.xlsx' (includes all sheets dynamically).")
+        # Add CSVs
+        csv_folder = "static_data"
+        if os.path.exists(csv_folder):
+            for csv_file in os.listdir(csv_folder):
+                if csv_file.endswith(".csv"):
+                    with open(os.path.join(csv_folder, csv_file), "rb") as f:
+                        zf.writestr(f"static_data/{csv_file}", f.read())
+    zip_buffer.seek(0)
+    return zip_buffer.getvalue()
+
+st.download_button(
+    "📦 Download All Data (ZIP)",
+    data=generate_data_package(),
+    file_name="Complete_Data_Package.zip",
+    mime="application/zip",
+)
+
+st.caption("⚡ Optimized with 1-hour resource caching and lightweight hybrid data architecture.")
