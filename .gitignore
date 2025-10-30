@@ -1,0 +1,58 @@
+# Byte-compiled / cache files
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.so
+
+# Virtual environments
+.venv/
+env/
+venv/
+ENV/
+env.bak/
+
+# Local Python config
+.pytest_cache/
+pip-log.txt
+pip-delete-this-directory.txt
+
+# Streamlit logs and cache
+.streamlit/
+.streamlit/secrets.toml
+.streamlit/config.toml
+
+# Build and packaging
+build/
+dist/
+*.egg-info/
+.eggs/
+
+# Jupyter and data files
+.ipynb_checkpoints/
+*.csv
+*.tsv
+*.xlsx
+*.xls
+*.json
+
+# VSCode / IDE / OS files
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# AWS Elastic Beanstalk
+.elasticbeanstalk/*.log
+.elasticbeanstalk/*.json
+.elasticbeanstalk/*.yml
+.elasticbeanstalk/*-env/
+.elasticbeanstalk/*.zip
+.elasticbeanstalk/.elasticbeanstalk/
+*.log
+
+# Do NOT ignore these — needed for deployment
+!Procfile
+!requirements.txt
+!.ebextensions/
