@@ -1,1 +1,1 @@
-web: streamlit run quant_scoring_reckoner.py --server.port=8080 --server.address=0.0.0.0
+web: bash -c "nohup streamlit run quant_scoring_reckoner.py --server.port=8080 --server.address=0.0.0.0 > streamlit.log 2>&1 &"
