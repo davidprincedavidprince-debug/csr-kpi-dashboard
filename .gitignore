@@ -32,7 +32,6 @@ dist/
 .ipynb_checkpoints/
 *.csv
 *.tsv
-*.xlsx
 *.xls
 *.json
 
