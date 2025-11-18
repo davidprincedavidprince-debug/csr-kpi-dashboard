@@ -13,7 +13,6 @@ st.set_page_config(page_title="Quant Scoring Reckoner", layout="wide")
 # ======================================================
 
 def extract_number_keep_none(obj):
-    """Extract numeric value from messy Excel cell."""
     if pd.isna(obj):
         return None
     s = str(obj).strip()
@@ -25,9 +24,7 @@ def extract_number_keep_none(obj):
     except:
         return None
 
-
 def clean_excel(filepath, sheet_name):
-    """Read specific Excel sheet efficiently."""
     excel_raw = pd.read_excel(filepath, sheet_name=sheet_name, header=None, engine="openpyxl")
     excel_raw = excel_raw.dropna(how="all")
 
@@ -50,26 +47,48 @@ def clean_excel(filepath, sheet_name):
 
     return df
 
-
 # ======================================================
 # 📊 Data Loaders with Optimized Resource Caching
 # ======================================================
 
 @st.cache_resource(ttl=3600)
 def load_analysis_data():
-    """
-    Load source.xlsx efficiently with 1-hour caching.
-    This prevents reloading large Excel files on every rerun.
-    """
     try:
-        df_main = clean_excel("source.xlsx", "indicator_analysis_table")
-        df_stlt = pd.read_excel("source.xlsx", sheet_name="short_term_long_term", engine="openpyxl")
-        st.success(f"✅ Loaded indicator_analysis_table ({len(df_main):,} rows) and short_term_long_term.")
-        return df_main, df_stlt
+        xl = pd.ExcelFile("source.xlsx", engine="openpyxl")
+        sheet_names = xl.sheet_names
+
+        if "indicator_analysis_table" in sheet_names:
+            df_main = clean_excel("source.xlsx", "indicator_analysis_table")
+        else:
+            candidate = next((s for s in sheet_names if "indicator" in s.lower() and "analysis" in s.lower()), None)
+            df_main = clean_excel("source.xlsx", candidate) if candidate else pd.DataFrame()
+
+        if "short_term_long_term" in sheet_names:
+            df_stlt = xl.parse("short_term_long_term")
+        else:
+            candidate = next((s for s in sheet_names if "short" in s.lower() and "long" in s.lower()), None)
+            df_stlt = xl.parse(candidate) if candidate else pd.DataFrame()
+
+        qual_candidate = next((
+            s for s in sheet_names
+            if s.strip().lower() in ("study closure", "study_closure")
+               or ("study" in s.lower() and "closure" in s.lower())
+        ), None)
+
+        df_qual = pd.DataFrame()
+        if qual_candidate:
+            df_qual = xl.parse(qual_candidate)
+            df_qual.columns = df_qual.columns.astype(str).str.strip()
+
+        return df_main, df_stlt, df_qual, sheet_names
+
+    except FileNotFoundError:
+        st.error("⚠️ Source file 'source.xlsx' not found. Please add it to the app folder.")
+        return pd.DataFrame(), pd.DataFrame(), pd.DataFrame(), []
+
     except Exception as e:
         st.error(f"⚠️ Error loading 'source.xlsx': {e}")
-        return pd.DataFrame(), pd.DataFrame()
-
+        return pd.DataFrame(), pd.DataFrame(), pd.DataFrame(), []
 
 # ======================================================
 # 🧾 KPI Calculations
@@ -96,106 +115,199 @@ def excel_style_calculations(df):
         "Total Quant Score - Relevance / Efficiency / Sustainability": round(total_score, 2),
     }
 
-
 # ======================================================
-# 🖥️ Streamlit Dashboard
+# 🖥️ Streamlit Dashboard (MULTI-PAGE)
 # ======================================================
 
-st.title("📊 Quant Scoring Reckoner Dashboard")
-st.caption("Optimized, Modular CSR Evaluation Framework")
+page = st.sidebar.selectbox("Pages", ["Quant Scoring Reckoner", "Short Term Long Term", "Qualitative Score"])
 
-df_main, df_stlt = load_analysis_data()
-if df_main.empty:
-    st.stop()
+df_main, df_stlt, df_qual, sheet_names = load_analysis_data()
 
-# --- Sidebar Filters ---
-st.sidebar.header("🔍 Filters")
+# --- Page: Quant Scoring Reckoner ---
+if page == "Quant Scoring Reckoner":
+    st.title("📊 Quant Scoring + Reckoner Dashboard")
+    st.caption("Optimized, Modular CSR Evaluation Framework")
 
-filter_cols = ["project_code", "Tool_level4", "score_type", "Intervention_level3", "Activity_level1"]
-filtered_df = df_main.copy()
+    if df_main.empty:
+        st.info("Indicator analysis data not found.")
+        st.stop()
 
-for col in filter_cols:
-    if col in df_main.columns:
-        options = sorted(df_main[col].dropna().unique().tolist())
-        if col == "score_type":
-            options = [opt for opt in options if opt not in ["Impact", "Effectiveness"]]
-        selected = st.sidebar.multiselect(col, options, default=options)
-        if len(selected) != len(options):
-            filtered_df = filtered_df[filtered_df[col].isin(selected)]
+    st.sidebar.header("🔍 Filters")
 
-if st.sidebar.button("🧹 Clear All Filters"):
-    st.rerun()  # ✅ updated API
+    filter_cols = ["project_code", "Tool_level4", "score_type", "Intervention_level3", "Activity_level1"]
+    filtered_df = df_main.copy()
 
-# --- KPI Calculations ---
-calc = excel_style_calculations(filtered_df)
-if calc:
-    st.markdown("## 📈 Key Performance Indicators (KPIs)")
-    kpi_cols = st.columns(3)
-    kpi_cols[0].metric("Total Responses", f"{calc['Total Responses']:,}")
-    kpi_cols[1].metric("Priority / Timeliness / Measures of Sustainability",
-                       f"{calc['Priority / Timeliness / Measures of Sustainability']:.2f}")
-    kpi_cols[2].metric("Sufficiency / Quality / Current Status",
-                       f"{calc['Sufficiency / Quality / Current Status']:.2f}")
+    for col in filter_cols:
+        if col in df_main.columns:
+            options = sorted(df_main[col].dropna().unique().tolist())
+            if col == "score_type":
+                options = [opt for opt in options if opt not in ["Impact", "Effectiveness"]]
+            selected = st.sidebar.multiselect(col, options, default=options)
+            if len(selected) != len(options):
+                filtered_df = filtered_df[filtered_df[col].isin(selected)]
+
+    if st.sidebar.button("🧹 Clear All Filters"):
+        st.rerun()
+
+    calc = excel_style_calculations(filtered_df)
+    if calc:
+        st.markdown("## 📈 Key Performance Indicators (KPIs)")
+        kpi_cols = st.columns(3)
+        kpi_cols[0].metric("Total Responses", f"{calc['Total Responses']:,}")
+        kpi_cols[1].metric("Priority / Timeliness / Measures of Sustainability", f"{calc['Priority / Timeliness / Measures of Sustainability']:.2f}")
+        kpi_cols[2].metric("Sufficiency / Quality / Current Status", f"{calc['Sufficiency / Quality / Current Status']:.2f}")
+
+        st.divider()
+        kpi_cols2 = st.columns(3)
+        kpi_cols2[0].metric("Score1_averageXsum", f"{calc['Score1_averageXsum']:,}")
+        kpi_cols2[1].metric("Score2_averageXsum", f"{calc['Score2_averageXsum']:,}")
+        kpi_cols2[2].metric("score1weight+score2weight", f"{calc['score1weight+score2weight']:,}")
+
+        st.metric("Total Quant Score", f"{calc['Total Quant Score - Relevance / Efficiency / Sustainability']:.2f}")
 
     st.divider()
-    kpi_cols2 = st.columns(3)
-    kpi_cols2[0].metric("Score1_averageXsum", f"{calc['Score1_averageXsum']:,}")
-    kpi_cols2[1].metric("Score2_averageXsum", f"{calc['Score2_averageXsum']:,}")
-    kpi_cols2[2].metric("score1weight+score2weight", f"{calc['score1weight+score2weight']:,}")
+    st.subheader("⬇️ Download Data")
 
-    st.metric("Total Quant Score",
-              f"{calc['Total Quant Score - Relevance / Efficiency / Sustainability']:.2f}")
+    buf = BytesIO()
+    filtered_df.to_excel(buf, index=False)
+    st.download_button("📥 Download Filtered Raw Data",
+                       data=buf.getvalue(),
+                       file_name="Filtered_Raw_Data.xlsx",
+                       mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
 
-# ======================================================
-# 📦 Download Options
-# ======================================================
+    def generate_data_package():
+        zip_buffer = BytesIO()
+        with ZipFile(zip_buffer, "w") as zf:
+            out_excel = BytesIO()
+            with pd.ExcelWriter(out_excel, engine="openpyxl") as writer:
+                df_main.to_excel(writer, index=False, sheet_name="indicator_analysis_table")
+                df_stlt.to_excel(writer, index=False, sheet_name="short_term_long_term")
+            zf.writestr("source_data.xlsx", out_excel.getvalue())
 
-st.divider()
-st.subheader("⬇️ Download Data")
+            possible_folders = ["static_data", "static data"]
+            csv_folder = next((f for f in possible_folders if os.path.exists(f)), None)
 
-# Filtered Excel
-buf = BytesIO()
-filtered_df.to_excel(buf, index=False)
-st.download_button("📥 Download Filtered Raw Data",
-                   data=buf.getvalue(),
-                   file_name="Filtered_Raw_Data.xlsx",
-                   mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+            if csv_folder:
+                for csv_file in os.listdir(csv_folder):
+                    if csv_file.lower().endswith(".csv"):
+                        file_path = os.path.join(csv_folder, csv_file)
+                        with open(file_path, "rb") as f:
+                            zf.writestr(f"{csv_folder}/{csv_file}", f.read())
+            else:
+                st.warning("⚠️ CSV folder not found. Ensure it's named 'static_data' or 'static data'.")
 
-# --- Smart Combined Download (Excel + CSVs) ---
-st.markdown("### 📦 Download Complete Dataset (Excel + CSVs)")
-st.caption("Includes indicator_analysis_table, short_term_long_term, and all supporting CSVs.")
+        zip_buffer.seek(0)
+        return zip_buffer.getvalue()
 
-def generate_data_package():
-    zip_buffer = BytesIO()
-    with ZipFile(zip_buffer, "w") as zf:
-        # Add both Excel sheets
-        out_excel = BytesIO()
-        with pd.ExcelWriter(out_excel, engine="openpyxl") as writer:
-            df_main.to_excel(writer, index=False, sheet_name="indicator_analysis_table")
-            df_stlt.to_excel(writer, index=False, sheet_name="short_term_long_term")
-        zf.writestr("source_data.xlsx", out_excel.getvalue())
+    st.download_button(
+        "📦 Download All Data (ZIP)",
+        data=generate_data_package(),
+        file_name="Complete_Data_Package.zip",
+        mime="application/zip",
+    )
 
-        # Detect CSV folder automatically
-        possible_folders = ["static_data", "static data"]
-        csv_folder = next((f for f in possible_folders if os.path.exists(f)), None)
+# --- Page: Short Term Long Term ---
+elif page == "Short Term Long Term":
+    st.title("📋 Short Term / Long Term")
+    if df_stlt.empty:
+        st.info("No 'short_term_long_term' sheet found.")
+    else:
+        # Normalize column names
+        df_stlt.columns = df_stlt.columns.astype(str).str.strip()
 
-        if csv_folder:
-            for csv_file in os.listdir(csv_folder):
-                if csv_file.lower().endswith(".csv"):
-                    file_path = os.path.join(csv_folder, csv_file)
-                    with open(file_path, "rb") as f:
-                        zf.writestr(f"{csv_folder}/{csv_file}", f.read())
+        # Coerce (if present) to numeric
+        if "response_count" in df_stlt.columns:
+            df_stlt["response_count"] = pd.to_numeric(df_stlt["response_count"], errors="coerce")
         else:
-            st.warning("⚠️ CSV folder not found. Ensure it's named 'static_data' or 'static data'.")
+            df_stlt["response_count"] = pd.NA
 
-    zip_buffer.seek(0)
-    return zip_buffer.getvalue()
+        if "average" in df_stlt.columns:
+            df_stlt["average"] = pd.to_numeric(df_stlt["average"], errors="coerce")
+        else:
+            df_stlt["average"] = pd.NA
 
-st.download_button(
-    "📦 Download All Data (ZIP)",
-    data=generate_data_package(),
-    file_name="Complete_Data_Package.zip",
-    mime="application/zip",
-)
+        # Sum of response_count (ignore NaN)
+        total_response_count = int(df_stlt["response_count"].dropna().sum()) if df_stlt["response_count"].dropna().size else 0
 
-st.caption("⚡ Optimized with 1-hour resource caching and automatic CSV folder detection.")
+        # Mean of the 'average' column (ignore NaN)
+        avg_of_avg = float(df_stlt["average"].dropna().mean()) if df_stlt["average"].dropna().size else None
+
+        # Display metrics (weighted average removed)
+        col1, col2 = st.columns([1, 1])
+        col1.metric("Total Response Count (sum)", f"{total_response_count:,}")
+        if avg_of_avg is not None:
+            col2.metric("Mean of 'average' column", f"{avg_of_avg:.2f}")
+        else:
+            col2.info("Mean of 'average': N/A")
+
+        st.dataframe(df_stlt.reset_index(drop=True), width="stretch")
+
+        buf2 = BytesIO()
+        df_stlt.to_excel(buf2, index=False)
+        st.download_button("📥 Download Short Term Long Term",
+                           data=buf2.getvalue(),
+                           file_name="short_term_long_term.xlsx",
+                           mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+
+# --- Page: Qualitative Score ---
+else:
+    st.title("📝 Qualitative Score")
+
+    if df_qual.empty:
+        st.info("No 'study closure' sheet found in source.xlsx.")
+    else:
+        def find_col(df, *candidates_lower):
+            for cand in candidates_lower:
+                for actual in df.columns:
+                    if actual.strip().lower() == cand.strip().lower():
+                        return actual
+                for actual in df.columns:
+                    if cand.strip().lower() in actual.strip().lower():
+                        return actual
+            return None
+
+        col_project = find_col(df_qual, "data.project_code", "project_code", "data.projectcode", "project")
+        col_value = find_col(df_qual, "value", "Value", "val")
+        col_tool = find_col(df_qual, "tool", "tool_name")
+        col_indicator = find_col(df_qual, "indicator", "indicator_name")
+        col_parameter = find_col(df_qual, "parameter", "parameter_name")
+        col_intervention = find_col(df_qual, "intervention", "intervention_name")
+
+        df_qual[col_value] = pd.to_numeric(df_qual[col_value], errors="coerce")
+
+        qual_filtered = df_qual.copy()
+        filter_cols_qual = []
+        if col_project: filter_cols_qual.append((col_project, "data.project_code"))
+        if col_tool: filter_cols_qual.append((col_tool, "tool"))
+        if col_indicator: filter_cols_qual.append((col_indicator, "indicator"))
+        if col_parameter: filter_cols_qual.append((col_parameter, "parameter"))
+        if col_intervention: filter_cols_qual.append((col_intervention, "intervention"))
+
+        st.sidebar.subheader("Qualitative Filters")
+
+        for actual_col, label in filter_cols_qual:
+            options = sorted(qual_filtered[actual_col].dropna().unique().tolist())
+            selected = st.sidebar.multiselect(f"{label}", options, default=options)
+            if len(selected) != len(options):
+                qual_filtered = qual_filtered[qual_filtered[actual_col].isin(selected)]
+
+        total_responses_qual = len(qual_filtered)
+        avg_value = float(qual_filtered[col_value].mean()) if not qual_filtered.empty else None
+
+        col1, col2 = st.columns(2)
+        col1.metric("Total Responses (Qualitative)", f"{total_responses_qual:,}")
+        if avg_value is not None:
+            col2.metric("Average Value", f"{avg_value:.2f}")
+        else:
+            col2.info("Average Value: N/A")
+
+        st.dataframe(qual_filtered.reset_index(drop=True), width="stretch")
+
+        qual_buf = BytesIO()
+        qual_filtered.to_excel(qual_buf, index=False)
+        st.download_button("📥 Download Filtered Qualitative Data",
+                           data=qual_buf.getvalue(),
+                           file_name="Filtered_Qualitative_Data.xlsx",
+                           mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+
+    st.caption("If you updated 'source.xlsx', refresh the app.")
