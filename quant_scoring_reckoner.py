@@ -240,7 +240,7 @@ elif page == "Short Term Long Term":
         else:
             col2.info("Mean of 'average': N/A")
 
-        st.dataframe(df_stlt.reset_index(drop=True), width="stretch")
+        st.dataframe(df_stlt.reset_index(drop=True), use_container_width=True)
 
         buf2 = BytesIO()
         df_stlt.to_excel(buf2, index=False)
@@ -301,7 +301,7 @@ else:
         else:
             col2.info("Average Value: N/A")
 
-        st.dataframe(qual_filtered.reset_index(drop=True), width="stretch")
+        st.dataframe(qual_filtered.reset_index(drop=True), use_container_width=True)
 
         qual_buf = BytesIO()
         qual_filtered.to_excel(qual_buf, index=False)
